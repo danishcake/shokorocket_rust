@@ -1,7 +1,12 @@
+use arrayvec::ArrayVec;
+
+use crate::{Walker, WalkerType, walker::WalkResult};
+
 use super::direction::Direction;
 
 pub const WORLD_WIDTH: usize = 12;
 pub const WORLD_HEIGHT: usize = 9;
+const MAX_WALKERS: usize = WORLD_WIDTH * WORLD_HEIGHT;
 const HEADER_SIZE: usize = 64;
 
 const LEFT_WALL_MASK: [u8; 4] = [0b00000010, 0b00001000, 0b00100000, 0b10000000];
@@ -31,16 +36,17 @@ const TOP_WALL_MASK: [u8; 4] = [0b00000001, 0b00000100, 0b00010000, 0b01000000];
 ///
 /// Followed by 108 of the following
 /// {
-///   uint8_t: 2 entity; // 0 -> empty, 1 -> mouse, 2 -> cat, 3 -> rocket
+///   uint8_t: 3 entity; // 0 -> empty, 1 -> mouse, 2 -> cat, 3 -> rocket, 4 -> hole, 5-7 -> unused
 ///   uint8_t: 2 entity_direction; // 0 -> up, 1 -> down, 2 -> left, 3 -> right
 ///   uint8_t: 1 arrow; // 0 -> empty, 1 -> arrow
 ///   uint8_t: 2 arrow_direction; // 0 -> up, 1 -> down, 2 -> left, 3 -> right
-///   uint8_t: 1 unused;
 /// }
 /// For a total of 64 + 27 + 108 bytes = 199 bytes
 /// TODO: More constants!
 pub struct World {
     data: [u8; 199],
+    mice: ArrayVec<Walker, MAX_WALKERS>,
+    cats: ArrayVec<Walker, MAX_WALKERS>,
 }
 
 impl World {
@@ -56,7 +62,11 @@ impl World {
     /// ```
     pub fn new() -> World {
         // Create the world
-        let mut world = World { data: [0; 199] };
+        let mut world = World {
+            data: [0; 199],
+            mice: ArrayVec::new(),
+            cats: ArrayVec::new()
+        };
 
         // Set the walls along the top/left, which also sets the right/bottom
         for x in 0..WORLD_WIDTH {
@@ -86,10 +96,9 @@ impl World {
     /// use shoko_rocket_rust::{World, Direction};
     /// let mut world = World::new();
     /// world.set_wall(0, 0, Direction::Down, true);
-    /// assert!(world.get_wall(0, 0, Direction::Down));
+    /// assert!(world.get_wrapped_wall_index_and_mask(0, 0, Direction::Down));
     /// ```
     fn get_wrapped_wall_index_and_mask(
-        &self,
         x: usize,
         y: usize,
         direction: Direction,
@@ -127,7 +136,7 @@ impl World {
         assert!(x < WORLD_WIDTH);
         assert!(y < WORLD_HEIGHT);
 
-        let (wall_index, mask) = self.get_wrapped_wall_index_and_mask(x, y, direction);
+        let (wall_index, mask) = World::get_wrapped_wall_index_and_mask(x, y, direction);
         let byte = &mut self.data[HEADER_SIZE + wall_index];
 
         if present {
@@ -135,6 +144,25 @@ impl World {
         } else {
             *byte = *byte & !mask;
         }
+    }
+
+    /// Gets the presence of a wall in the specified position and direction
+    ///
+    /// Arguments:
+    /// * `wall_data`: The internal representation of the walls
+    /// * `x`: The x coordinate to check. Must be in range 0-11
+    /// * `y`: The y coordinate to check. Must be in range 0-8
+    /// * `direction`: The direction to check
+    ///
+    /// Return value:
+    /// True if the value is present
+    fn get_wall_static(wall_data: &[u8; 199], x: usize, y: usize, direction: Direction) -> bool {
+        assert!(x < WORLD_WIDTH);
+        assert!(y < WORLD_HEIGHT);
+
+        let (wall_index, mask) = World::get_wrapped_wall_index_and_mask(x, y, direction);
+        let byte = &wall_data[HEADER_SIZE + wall_index];
+        return *byte & mask == mask;
     }
 
     /// Gets the presence of a wall in the specified position and direction
@@ -154,12 +182,91 @@ impl World {
     /// assert!(world.get_wall(0, 0, Direction::Up));
     /// ```
     pub fn get_wall(&self, x: usize, y: usize, direction: Direction) -> bool {
+        World::get_wall_static(&self.data, x, y, direction)
+    }
+
+    /// Creates a walker. There are a limited number of walkers that can be created, and this
+    /// function will panic if too many are created
+    ///
+    /// Arguments:
+    /// * `x`: The x coordinate of the walker
+    /// * `y`: The y coordinate of the walker
+    /// * `direction`: The direction of the walker
+    /// * `walker_type`: The type of walker
+    ///
+    /// #examples
+    /// ```
+    /// use shoko_rocket_rust::{World, Direction, WalkerType};
+    /// let mut world = World::new();
+    /// world.create_walker(0, 0, Direction::Right, WalkerType::Mouse);
+    /// ```
+    pub fn create_walker(&mut self, x: usize, y: usize, direction: Direction, walker_type: WalkerType) {
         assert!(x < WORLD_WIDTH);
         assert!(y < WORLD_HEIGHT);
 
-        let (wall_index, mask) = self.get_wrapped_wall_index_and_mask(x, y, direction);
-        let byte = &self.data[HEADER_SIZE + wall_index];
-        return *byte & mask == mask;
+        let walker = Walker::new(x as i8, y as i8, direction, walker_type);
+        match walker.get_type() {
+            WalkerType::Mouse => self.mice.push(walker),
+            WalkerType::Cat => self.cats.push(walker)
+        }
+    }
+
+    /// Advances the simulation state of the world
+    /// * Mice move forward 3 units
+    /// * Cats move forward 2 units
+    /// Each frame check mouse/cat collisions
+    /// * Mice are killed by cats, causing defeat
+    /// On reaching a new grid, walkers check holes/rockets
+    /// * Cats are killed by holes
+    /// * Mice are killed by holes, causing defeat
+    /// * Mice are rescued by rockets
+    /// * Cats destroy rockets, causing defeat
+    /// On reaching a new grid, walkers check arrow
+    /// * Mice are directed by the arrow
+    /// * Cats are directed by arrows, and if turned around, consume the arrow
+    /// On reaching a new grid, walkers check walls
+    /// On all mice rescued, victory
+    pub fn tick(&mut self) {
+        // 1. Advance mice and cats
+        for walker in self.mice.iter_mut() {
+            if walker.walk() == WalkResult::NewSquare {
+                // 2. Check holes, rockets#
+                // 3. Check arrows
+                // 4. Check walls
+                World::check_walls(&self.data, walker);
+            }
+        }
+        for walker in self.cats.iter_mut() {
+            walker.walk();
+        }
+    }
+
+    /// Handles collisions with walls
+    /// * If not blocked, keep going straight
+    /// * If blocked and able to turn right, turn right
+    /// * If blocked and unable to turn right, turn left
+    /// * If blocked and unable to turn left or right, return around
+    /// * If blocked all around, keep going straight. This will in practice not happen due to
+    ///   level design
+    fn check_walls(wall_data: &[u8; 199], walker: &mut Walker) {
+        let x = walker.get_x().integer_part() as usize;
+        let y = walker.get_y().integer_part() as usize;
+        let direction = walker.get_direction();
+
+        // Priority list of directions to travel. The first clear direction will be used
+        let candidate_directions = [
+            direction,
+            direction.turn_right(),
+            direction.turn_left(),
+            direction.turn_around()
+        ];
+
+        for candidate_direction in candidate_directions {
+            if !World::get_wall_static(wall_data, x, y, candidate_direction) {
+                walker.set_direction(candidate_direction);
+                break;
+            }
+        }
     }
 }
 
@@ -172,33 +279,32 @@ mod test {
     /// THEN the correct values are returned
     #[test]
     fn index_and_masm() {
-        let world = World::new();
-        assert_eq!((0, 0b00000001), world.get_wrapped_wall_index_and_mask(0, 0, Direction::Up));
-        assert_eq!((0, 0b00000100), world.get_wrapped_wall_index_and_mask(1, 0, Direction::Up));
-        assert_eq!((0, 0b00010000), world.get_wrapped_wall_index_and_mask(2, 0, Direction::Up));
-        assert_eq!((0, 0b01000000), world.get_wrapped_wall_index_and_mask(3, 0, Direction::Up));
-        assert_eq!((1, 0b00000001), world.get_wrapped_wall_index_and_mask(4, 0, Direction::Up));
+        assert_eq!((0, 0b00000001), World::get_wrapped_wall_index_and_mask(0, 0, Direction::Up));
+        assert_eq!((0, 0b00000100), World::get_wrapped_wall_index_and_mask(1, 0, Direction::Up));
+        assert_eq!((0, 0b00010000), World::get_wrapped_wall_index_and_mask(2, 0, Direction::Up));
+        assert_eq!((0, 0b01000000), World::get_wrapped_wall_index_and_mask(3, 0, Direction::Up));
+        assert_eq!((1, 0b00000001), World::get_wrapped_wall_index_and_mask(4, 0, Direction::Up));
 
-        assert_eq!((0, 0b00000010), world.get_wrapped_wall_index_and_mask(0, 0, Direction::Left));
-        assert_eq!((0, 0b00001000), world.get_wrapped_wall_index_and_mask(1, 0, Direction::Left));
-        assert_eq!((0, 0b00100000), world.get_wrapped_wall_index_and_mask(2, 0, Direction::Left));
-        assert_eq!((0, 0b10000000), world.get_wrapped_wall_index_and_mask(3, 0, Direction::Left));
-        assert_eq!((1, 0b00000010), world.get_wrapped_wall_index_and_mask(4, 0, Direction::Left));
+        assert_eq!((0, 0b00000010), World::get_wrapped_wall_index_and_mask(0, 0, Direction::Left));
+        assert_eq!((0, 0b00001000), World::get_wrapped_wall_index_and_mask(1, 0, Direction::Left));
+        assert_eq!((0, 0b00100000), World::get_wrapped_wall_index_and_mask(2, 0, Direction::Left));
+        assert_eq!((0, 0b10000000), World::get_wrapped_wall_index_and_mask(3, 0, Direction::Left));
+        assert_eq!((1, 0b00000010), World::get_wrapped_wall_index_and_mask(4, 0, Direction::Left));
 
         // Down walls are the top wall of the cell below, increasing the index by 3
-        assert_eq!((3, 0b00000001), world.get_wrapped_wall_index_and_mask(0, 0, Direction::Down));
-        assert_eq!((3, 0b00000100), world.get_wrapped_wall_index_and_mask(1, 0, Direction::Down));
-        assert_eq!((3, 0b00010000), world.get_wrapped_wall_index_and_mask(2, 0, Direction::Down));
-        assert_eq!((3, 0b01000000), world.get_wrapped_wall_index_and_mask(3, 0, Direction::Down));
-        assert_eq!((4, 0b00000001), world.get_wrapped_wall_index_and_mask(4, 0, Direction::Down));
+        assert_eq!((3, 0b00000001), World::get_wrapped_wall_index_and_mask(0, 0, Direction::Down));
+        assert_eq!((3, 0b00000100), World::get_wrapped_wall_index_and_mask(1, 0, Direction::Down));
+        assert_eq!((3, 0b00010000), World::get_wrapped_wall_index_and_mask(2, 0, Direction::Down));
+        assert_eq!((3, 0b01000000), World::get_wrapped_wall_index_and_mask(3, 0, Direction::Down));
+        assert_eq!((4, 0b00000001), World::get_wrapped_wall_index_and_mask(4, 0, Direction::Down));
 
         // Right walls are the left wall of the cell to the left, shifting the mask and increasing
         // the index by 1 for every 4th eleemnt
-        assert_eq!((0, 0b00001000), world.get_wrapped_wall_index_and_mask(0, 0, Direction::Right));
-        assert_eq!((0, 0b00100000), world.get_wrapped_wall_index_and_mask(1, 0, Direction::Right));
-        assert_eq!((0, 0b10000000), world.get_wrapped_wall_index_and_mask(2, 0, Direction::Right));
-        assert_eq!((1, 0b00000010), world.get_wrapped_wall_index_and_mask(3, 0, Direction::Right));
-        assert_eq!((1, 0b00001000), world.get_wrapped_wall_index_and_mask(4, 0, Direction::Right));
+        assert_eq!((0, 0b00001000), World::get_wrapped_wall_index_and_mask(0, 0, Direction::Right));
+        assert_eq!((0, 0b00100000), World::get_wrapped_wall_index_and_mask(1, 0, Direction::Right));
+        assert_eq!((0, 0b10000000), World::get_wrapped_wall_index_and_mask(2, 0, Direction::Right));
+        assert_eq!((1, 0b00000010), World::get_wrapped_wall_index_and_mask(3, 0, Direction::Right));
+        assert_eq!((1, 0b00001000), World::get_wrapped_wall_index_and_mask(4, 0, Direction::Right));
     }
 
     /// GIVEN a newly created world
@@ -229,5 +335,72 @@ mod test {
                 assert_eq!(false, world.get_wall(x, y, Direction::Right));
             }
         }
+    }
+
+    /// GIVEN a wall directly ahead
+    /// WHEN a walker walks towards/along/away from the wall
+    /// THEN the correct turns (right/none/none) are made
+    #[test]
+    fn walker_wall_straight() {
+        let world = World::new();
+        let mut walker_up = Walker::new(4, 0, Direction::Up, WalkerType::Mouse);
+        let mut walker_down = Walker::new(4, 0, Direction::Down, WalkerType::Mouse);
+        let mut walker_left = Walker::new(4, 0, Direction::Left, WalkerType::Mouse);
+        let mut walker_right = Walker::new(4, 0, Direction::Right, WalkerType::Mouse);
+
+        World::check_walls(&world.data, &mut walker_up);
+        World::check_walls(&world.data, &mut walker_down);
+        World::check_walls(&world.data, &mut walker_left);
+        World::check_walls(&world.data, &mut walker_right);
+
+        assert_eq!(Direction::Right, walker_up.get_direction());
+        assert_eq!(Direction::Down, walker_down.get_direction());
+        assert_eq!(Direction::Left, walker_left.get_direction());
+        assert_eq!(Direction::Right, walker_right.get_direction());
+    }
+
+    /// GIVEN a wall directly ahead and to the right
+    /// WHEN the walker walks towards/left/right/away from the wall
+    /// THEN the correct turns (left/none/down/none) are made
+    #[test]
+    fn walker_wall_forced_left() {
+        let world = World::new();
+        let mut walker_up = Walker::new(11, 0, Direction::Up, WalkerType::Mouse);
+        let mut walker_down = Walker::new(11, 0, Direction::Down, WalkerType::Mouse);
+        let mut walker_left = Walker::new(11, 0, Direction::Left, WalkerType::Mouse);
+        let mut walker_right = Walker::new(11, 0, Direction::Right, WalkerType::Mouse);
+
+        World::check_walls(&world.data, &mut walker_up);
+        World::check_walls(&world.data, &mut walker_down);
+        World::check_walls(&world.data, &mut walker_left);
+        World::check_walls(&world.data, &mut walker_right);
+
+        assert_eq!(Direction::Left, walker_up.get_direction());
+        assert_eq!(Direction::Down, walker_down.get_direction());
+        assert_eq!(Direction::Left, walker_left.get_direction());
+        assert_eq!(Direction::Down, walker_right.get_direction());
+    }
+
+    /// GIVEN a wall in a U shape (directly ahead and to the left and right)
+    /// WHEN the walker walks towards/left/right/away from the wall
+    /// THEN the correct turns (around/left/right/none) are made
+    #[test]
+    fn walker_wall_u_shape() {
+        let mut world = World::new();
+        world.set_wall(0, 0, Direction::Right, true);
+        let mut walker_up = Walker::new(0, 0, Direction::Up, WalkerType::Mouse);
+        let mut walker_down = Walker::new(0, 0, Direction::Down, WalkerType::Mouse);
+        let mut walker_left = Walker::new(0, 0, Direction::Left, WalkerType::Mouse);
+        let mut walker_right = Walker::new(0, 0, Direction::Right, WalkerType::Mouse);
+
+        World::check_walls(&world.data, &mut walker_up);
+        World::check_walls(&world.data, &mut walker_down);
+        World::check_walls(&world.data, &mut walker_left);
+        World::check_walls(&world.data, &mut walker_right);
+
+        assert_eq!(Direction::Down, walker_up.get_direction());
+        assert_eq!(Direction::Down, walker_down.get_direction());
+        assert_eq!(Direction::Down, walker_left.get_direction());
+        assert_eq!(Direction::Down, walker_right.get_direction());
     }
 }

@@ -9,7 +9,7 @@ pub enum Direction {
 
 impl Direction {
     /// Rotates a direction to the right
-    fn turn_right(self) -> Direction {
+    pub fn turn_right(&self) -> Direction {
         match self {
             Direction::Up => Direction::Right,
             Direction::Down => Direction::Left,
@@ -19,7 +19,7 @@ impl Direction {
     }
 
     /// Rotates a direction to the left
-    fn turn_left(self) -> Direction {
+    pub fn turn_left(&self) -> Direction {
         match self {
             Direction::Up => Direction::Left,
             Direction::Down => Direction::Right,
@@ -29,7 +29,7 @@ impl Direction {
     }
 
     /// Rotates a direction 180 degrees
-    fn turn_around(self) -> Direction {
+    pub fn turn_around(&self) -> Direction {
         match self {
             Direction::Up => Direction::Down,
             Direction::Down => Direction::Up,

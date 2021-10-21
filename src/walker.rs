@@ -2,6 +2,7 @@ use super::Direction;
 use super::FixedPoint;
 
 /// Type of walker. This determines how fast they move
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum WalkerType {
     Mouse,
     Cat,
@@ -82,6 +83,31 @@ impl Walker {
         } else {
             WalkResult::None
         };
+    }
+
+    /// Gets the type of walker
+    pub fn get_type(&self) -> WalkerType {
+        self.walker_type
+    }
+
+    /// Gets the x-coordinate of the walker
+    pub fn get_x(&self) -> FixedPoint {
+        self.x
+    }
+
+    /// Gets the y-coordinate of the walker
+    pub fn get_y(&self) -> FixedPoint {
+        self.y
+    }
+
+    /// Gets the walk direction of the walker
+    pub fn get_direction(&self) -> Direction {
+        self.direction
+    }
+
+    /// Sets the walk direction of the walker
+    pub fn set_direction(&mut self, direction: Direction) {
+        self.direction = direction;
     }
 }
 

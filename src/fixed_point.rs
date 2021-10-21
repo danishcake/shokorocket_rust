@@ -103,6 +103,13 @@ impl FixedPoint {
         // If I did this I could probably optimise this, as I could more or less take the input and
         // do a couple of comparisons on the remainder
     }
+
+    /// Gets the integer part of the number
+    /// 1.5 -> 1
+    /// -1.5 -> -1
+    pub fn integer_part(self) -> i8 {
+        self.value
+    }
 }
 
 /// Implements the Add trait for FixedPoint
