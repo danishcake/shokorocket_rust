@@ -1,12 +1,13 @@
 use arrayvec::ArrayVec;
 
-use crate::{Walker, WalkerType, walker::WalkResult};
+use crate::{ArrowTile, Walker, WalkerType, walker::WalkResult};
 
 use super::direction::Direction;
 
 pub const WORLD_WIDTH: usize = 12;
 pub const WORLD_HEIGHT: usize = 9;
 const MAX_WALKERS: usize = WORLD_WIDTH * WORLD_HEIGHT;
+const MAX_ARROWS: usize = 32;
 const HEADER_SIZE: usize = 64;
 
 const LEFT_WALL_MASK: [u8; 4] = [0b00000010, 0b00001000, 0b00100000, 0b10000000];
@@ -47,6 +48,7 @@ pub struct World {
     data: [u8; 199],
     mice: ArrayVec<Walker, MAX_WALKERS>,
     cats: ArrayVec<Walker, MAX_WALKERS>,
+    arrows: ArrayVec<ArrowTile, MAX_ARROWS>
 }
 
 impl World {
@@ -65,7 +67,8 @@ impl World {
         let mut world = World {
             data: [0; 199],
             mice: ArrayVec::new(),
-            cats: ArrayVec::new()
+            cats: ArrayVec::new(),
+            arrows: ArrayVec::new()
         };
 
         // Set the walls along the top/left, which also sets the right/bottom
@@ -90,14 +93,6 @@ impl World {
     ///
     /// Return value:
     /// A tuple containing the wall index and the mask required to extract the given direction
-    ///
-    /// #examples
-    /// ```
-    /// use shoko_rocket_rust::{World, Direction};
-    /// let mut world = World::new();
-    /// world.set_wall(0, 0, Direction::Down, true);
-    /// assert!(world.get_wrapped_wall_index_and_mask(0, 0, Direction::Down));
-    /// ```
     fn get_wrapped_wall_index_and_mask(
         x: usize,
         y: usize,
@@ -230,11 +225,12 @@ impl World {
         // 1. Advance mice and cats
         for walker in self.mice.iter_mut() {
             if walker.walk() == WalkResult::NewSquare {
-                // 2. Check holes, rockets#
+                // 2. Check holes, rockets
                 // 3. Check arrows
                 // 4. Check walls
                 World::check_walls(&self.data, walker);
             }
+            // 5. Check cat/mouse collisions
         }
         for walker in self.cats.iter_mut() {
             walker.walk();
