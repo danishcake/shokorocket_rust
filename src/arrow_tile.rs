@@ -15,13 +15,6 @@ pub enum ArrowType {
     RightHalf,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub struct ArrowTile {
-    arrow_type: ArrowType,
-    x: u8,
-    y: u8
-}
-
 impl ArrowType {
     /// Diminishes the size of an arrow. Other tile types are
     /// unaffected
@@ -61,11 +54,10 @@ impl TryFrom<ArrowType> for Direction {
             ArrowType::Down | ArrowType::DownHalf => Ok(Direction::Down),
             ArrowType::Left | ArrowType::LeftHalf => Ok(Direction::Left),
             ArrowType::Right | ArrowType::RightHalf => Ok(Direction::Right),
-            ArrowType::Empty => Err(())
+            ArrowType::Empty => Err(()),
         }
     }
 }
-
 
 #[cfg(test)]
 mod test {

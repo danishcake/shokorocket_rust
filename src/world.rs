@@ -1,13 +1,13 @@
 use arrayvec::ArrayVec;
 
-use crate::{ArrowTile, Walker, WalkerType, walker::WalkResult};
+use crate::{walker::WalkResult, ArrowType, Walker, WalkerType};
 
 use super::direction::Direction;
 
 pub const WORLD_WIDTH: usize = 12;
 pub const WORLD_HEIGHT: usize = 9;
 const MAX_WALKERS: usize = WORLD_WIDTH * WORLD_HEIGHT;
-const MAX_ARROWS: usize = 32;
+const MAX_TILES: usize = WORLD_WIDTH * WORLD_HEIGHT;
 const HEADER_SIZE: usize = 64;
 
 const LEFT_WALL_MASK: [u8; 4] = [0b00000010, 0b00001000, 0b00100000, 0b10000000];
@@ -48,7 +48,7 @@ pub struct World {
     data: [u8; 199],
     mice: ArrayVec<Walker, MAX_WALKERS>,
     cats: ArrayVec<Walker, MAX_WALKERS>,
-    arrows: ArrayVec<ArrowTile, MAX_ARROWS>
+    arrows: [ArrowType; MAX_TILES],
 }
 
 impl World {
@@ -68,7 +68,7 @@ impl World {
             data: [0; 199],
             mice: ArrayVec::new(),
             cats: ArrayVec::new(),
-            arrows: ArrayVec::new()
+            arrows: [ArrowType::Empty; MAX_TILES],
         };
 
         // Set the walls along the top/left, which also sets the right/bottom
@@ -93,11 +93,7 @@ impl World {
     ///
     /// Return value:
     /// A tuple containing the wall index and the mask required to extract the given direction
-    fn get_wrapped_wall_index_and_mask(
-        x: usize,
-        y: usize,
-        direction: Direction,
-    ) -> (usize, u8) {
+    fn get_wrapped_wall_index_and_mask(x: usize, y: usize, direction: Direction) -> (usize, u8) {
         assert!(x < WORLD_WIDTH);
         assert!(y < WORLD_HEIGHT);
 
@@ -195,15 +191,53 @@ impl World {
     /// let mut world = World::new();
     /// world.create_walker(0, 0, Direction::Right, WalkerType::Mouse);
     /// ```
-    pub fn create_walker(&mut self, x: usize, y: usize, direction: Direction, walker_type: WalkerType) {
+    pub fn create_walker(
+        &mut self,
+        x: usize,
+        y: usize,
+        direction: Direction,
+        walker_type: WalkerType,
+    ) {
         assert!(x < WORLD_WIDTH);
         assert!(y < WORLD_HEIGHT);
 
         let walker = Walker::new(x as i8, y as i8, direction, walker_type);
         match walker.get_type() {
             WalkerType::Mouse => self.mice.push(walker),
-            WalkerType::Cat => self.cats.push(walker)
+            WalkerType::Cat => self.cats.push(walker),
         }
+    }
+
+    /// Sets the arrow at the specified location
+    ///
+    /// Arguments:
+    /// * `x`: The x coordinate to check. Must be in range 0-11
+    /// * `y`: The y coordinate to check. Must be in range 0-8
+    /// * `arrow_type`: The type of arrow to set
+    pub fn set_arrow(&mut self, x: usize, y: usize, arrow_type: ArrowType) {
+        self.arrows[y * WORLD_WIDTH + x] = arrow_type;
+    }
+
+    /// Gets the arrow at the specified location
+    ///
+    /// Arguments:
+    /// * `x`: The x coordinate to check. Must be in range 0-11
+    /// * `y`: The y coordinate to check. Must be in range 0-8
+    ///
+    /// Return value:
+    /// The type of arrow present at the specified coordinate
+    ///
+    /// #examples
+    /// ```
+    /// use shoko_rocket_rust::World;
+    /// let mut world = World::new();
+    /// world.get_arrow(0, 0);
+    /// ```
+    pub fn get_arrow(&self, x: usize, y: usize) -> ArrowType {
+        assert!(x < WORLD_WIDTH);
+        assert!(y < WORLD_HEIGHT);
+
+        return self.arrows[y * WORLD_WIDTH + x];
     }
 
     /// Advances the simulation state of the world
@@ -254,7 +288,7 @@ impl World {
             direction,
             direction.turn_right(),
             direction.turn_left(),
-            direction.turn_around()
+            direction.turn_around(),
         ];
 
         for candidate_direction in candidate_directions {
@@ -398,5 +432,21 @@ mod test {
         assert_eq!(Direction::Down, walker_down.get_direction());
         assert_eq!(Direction::Down, walker_left.get_direction());
         assert_eq!(Direction::Down, walker_right.get_direction());
+    }
+
+    /// GIVEN a newly created world
+    /// WHEN an arrow is set
+    /// THEN reading that arrow back returns the correct value
+    #[test]
+    fn arrow_get_set() {
+        let mut world = World::new();
+
+        assert_eq!(ArrowType::Empty, world.get_arrow(0, 0));
+        world.set_arrow(0, 0, ArrowType::Right);
+        assert_eq!(ArrowType::Right, world.get_arrow(0, 0));
+
+        assert_eq!(ArrowType::Empty, world.get_arrow(7, 3));
+        world.set_arrow(7, 3, ArrowType::Right);
+        assert_eq!(ArrowType::Right, world.get_arrow(7, 3));
     }
 }
