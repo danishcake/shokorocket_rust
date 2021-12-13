@@ -1,17 +1,44 @@
+use crate::{walker::WalkResult, ArrowType, Direction, Walker, WalkerType};
 use arrayvec::ArrayVec;
+use std::convert::TryInto;
 
-use crate::{walker::WalkResult, ArrowType, Walker, WalkerType};
-
-use super::direction::Direction;
-
+/// The width of the world
 pub const WORLD_WIDTH: usize = 12;
+/// The height of the world
 pub const WORLD_HEIGHT: usize = 9;
+/// The maximum number of walkers, if all squares were filled with walkers
 const MAX_WALKERS: usize = WORLD_WIDTH * WORLD_HEIGHT;
+/// The maximum number of tiles, if all squares were filled with tiles
 const MAX_TILES: usize = WORLD_WIDTH * WORLD_HEIGHT;
+/// The size of the header (e.g. the name and author of the map)
 const HEADER_SIZE: usize = 64;
-
+/// The size of the wall block
+const WALL_BLOCK_SIZE: usize = 27;
+/// The masks used to pack the left walls. There are four walls packed into each byte
 const LEFT_WALL_MASK: [u8; 4] = [0b00000010, 0b00001000, 0b00100000, 0b10000000];
+/// The masks uses to pack the top walls.
 const TOP_WALL_MASK: [u8; 4] = [0b00000001, 0b00000100, 0b00010000, 0b01000000];
+
+const ENTITY_TYPE_MASK: u8 = 0b11100000u8;
+const ENTITY_DIRECTION_MASK: u8 = 0b00011000u8;
+const ARROW_PRESENT_MASK: u8 = 0b00000100u8;
+const ARROW_DIRECTION_MASK: u8 = 0b00000011u8;
+
+const ENTITY_TYPE_EMPTY: u8 = 0b00000000;
+const ENTITY_TYPE_MOUSE: u8 = 0b00100000;
+const ENTITY_TYPE_CAT: u8 = 0b01000000;
+const ENTITY_TYPE_ROCKET: u8 = 0b01100000;
+const ENTITY_TYPE_HOLE: u8 = 0b10000000;
+
+const ENTITY_DIRECTION_UP: u8 = 0b00000000;
+const ENTITY_DIRECTION_DOWN: u8 = 0b00001000;
+const ENTITY_DIRECTION_LEFT: u8 = 0b00010000;
+const ENTITY_DIRECTION_RIGHT: u8 = 0b00011000;
+
+const ARROW_DIRECTION_UP: u8 = 0b00000000;
+const ARROW_DIRECTION_DOWN: u8 = 0b00000001;
+const ARROW_DIRECTION_LEFT: u8 = 0b00000010;
+const ARROW_DIRECTION_RIGHT: u8 = 0b00000011;
 
 /// Represents the entire state of a world
 /// This is a 12x9 array of squares. Each square controls the top and left walls,
@@ -206,6 +233,24 @@ impl World {
             WalkerType::Mouse => self.mice.push(walker),
             WalkerType::Cat => self.cats.push(walker),
         }
+
+        // Create the corresponding walker in the data array
+        let walker_data = &mut self.data[HEADER_SIZE + WALL_BLOCK_SIZE..];
+        let walker_byte = &mut walker_data[y * WORLD_WIDTH + x];
+
+        *walker_byte = *walker_byte & (ARROW_PRESENT_MASK | ARROW_DIRECTION_MASK);
+        *walker_byte = *walker_byte
+            | match direction {
+                Direction::Up => ENTITY_DIRECTION_UP,
+                Direction::Down => ENTITY_DIRECTION_DOWN,
+                Direction::Left => ENTITY_DIRECTION_LEFT,
+                Direction::Right => ENTITY_DIRECTION_RIGHT,
+            };
+        *walker_byte = *walker_byte
+            | match walker_type {
+                WalkerType::Mouse => ENTITY_TYPE_MOUSE,
+                WalkerType::Cat => ENTITY_TYPE_CAT,
+            };
     }
 
     /// Sets the arrow at the specified location
@@ -215,7 +260,23 @@ impl World {
     /// * `y`: The y coordinate to check. Must be in range 0-8
     /// * `arrow_type`: The type of arrow to set
     pub fn set_arrow(&mut self, x: usize, y: usize, arrow_type: ArrowType) {
-        self.arrows[y * WORLD_WIDTH + x] = arrow_type;
+        World::set_arrow_static(&mut self.arrows, x, y, arrow_type)
+    }
+
+    /// Sets the arrow at the specified location
+    ///
+    /// Arguments:
+    /// * `arrows`: The internal representation of the arrows
+    /// * `x`: The x coordinate to check. Must be in range 0-11
+    /// * `y`: The y coordinate to check. Must be in range 0-8
+    /// * `arrow_type`: The type of arrow to set
+    fn set_arrow_static(
+        arrows: &mut [ArrowType; MAX_TILES],
+        x: usize,
+        y: usize,
+        arrow_type: ArrowType,
+    ) {
+        arrows[y * WORLD_WIDTH + x] = arrow_type;
     }
 
     /// Gets the arrow at the specified location
@@ -234,10 +295,23 @@ impl World {
     /// world.get_arrow(0, 0);
     /// ```
     pub fn get_arrow(&self, x: usize, y: usize) -> ArrowType {
+        return World::get_arrow_static(&self.arrows, x, y);
+    }
+
+    /// Gets the arrow at the specified location
+    ///
+    /// Arguments:
+    /// * `arrows`: The internal representation of the arrows
+    /// * `x`: The x coordinate to check. Must be in range 0-11
+    /// * `y`: The y coordinate to check. Must be in range 0-8
+    ///
+    /// Return value:
+    /// The type of arrow present at the specified coordinate
+    fn get_arrow_static(arrows: &[ArrowType; MAX_TILES], x: usize, y: usize) -> ArrowType {
         assert!(x < WORLD_WIDTH);
         assert!(y < WORLD_HEIGHT);
 
-        return self.arrows[y * WORLD_WIDTH + x];
+        return arrows[y * WORLD_WIDTH + x];
     }
 
     /// Advances the simulation state of the world
@@ -257,18 +331,24 @@ impl World {
     /// On all mice rescued, victory
     pub fn tick(&mut self) {
         // 1. Advance mice and cats
-        for walker in self.mice.iter_mut() {
+        let all_walkers = self.mice.iter_mut().chain(self.cats.iter_mut());
+        for walker in all_walkers {
             if walker.walk() == WalkResult::NewSquare {
                 // 2. Check holes, rockets
+                // This will require a 'world_state'
+                // -> Ok, Win, Lose
+                // This could be the return type of this function
+                // Also need to consider how to reset to the initial state
+
                 // 3. Check arrows
+                World::check_arrows(&mut self.arrows, walker);
+
                 // 4. Check walls
                 World::check_walls(&self.data, walker);
             }
-            // 5. Check cat/mouse collisions
         }
-        for walker in self.cats.iter_mut() {
-            walker.walk();
-        }
+
+        // 5. Check cat/mouse collisions
     }
 
     /// Handles collisions with walls
@@ -278,9 +358,13 @@ impl World {
     /// * If blocked and unable to turn left or right, return around
     /// * If blocked all around, keep going straight. This will in practice not happen due to
     ///   level design
+    ///
+    /// Arguments:
+    /// * `wall_data`: The internal representation of the walls
+    /// * `walker`: The Walker to check
     fn check_walls(wall_data: &[u8; 199], walker: &mut Walker) {
-        let x = walker.get_x().integer_part() as usize;
-        let y = walker.get_y().integer_part() as usize;
+        let (x, y) =
+            (walker.get_x().integer_part() as usize, walker.get_y().integer_part() as usize);
         let direction = walker.get_direction();
 
         // Priority list of directions to travel. The first clear direction will be used
@@ -298,6 +382,34 @@ impl World {
             }
         }
     }
+
+    /// Handles collisions between arrows and walkers
+    /// * Walkers are turned to face the arrow direction
+    /// * If a cat is turned 180 degrees then the arrow is diminished
+    ///
+    /// Arguments:
+    /// * `arrows`: The active arrows
+    /// * `walker`: The Walker to check
+    fn check_arrows(arrows: &mut [ArrowType; MAX_TILES], walker: &mut Walker) {
+        let (x, y) =
+            (walker.get_x().integer_part() as usize, walker.get_y().integer_part() as usize);
+        let arrow = World::get_arrow_static(arrows, x, y);
+        let arrow_direction = arrow.try_into();
+        match arrow_direction {
+            Ok(direction) => {
+                // If turning around a cat, diminish the arrow
+                if walker.get_type() == WalkerType::Cat
+                    && walker.get_direction().turn_around() == direction
+                {
+                    World::set_arrow_static(arrows, x, y, arrow.diminish());
+                }
+                walker.set_direction(direction);
+            }
+            Err(_) => {
+                // Indicates an empty tile, which is fine
+            }
+        };
+    }
 }
 
 #[cfg(test)]
@@ -308,7 +420,7 @@ mod test {
     /// WHEN we calculate the wall index and bitmask
     /// THEN the correct values are returned
     #[test]
-    fn index_and_masm() {
+    fn index_and_mask() {
         assert_eq!((0, 0b00000001), World::get_wrapped_wall_index_and_mask(0, 0, Direction::Up));
         assert_eq!((0, 0b00000100), World::get_wrapped_wall_index_and_mask(1, 0, Direction::Up));
         assert_eq!((0, 0b00010000), World::get_wrapped_wall_index_and_mask(2, 0, Direction::Up));
@@ -365,6 +477,29 @@ mod test {
                 assert_eq!(false, world.get_wall(x, y, Direction::Right));
             }
         }
+    }
+
+    /// GIVEN an empty world
+    /// WHEN a walker is created
+    /// THEN the walker is added to the correct walker array
+    /// AND the walker is added to the backing data
+    #[test]
+    fn walker_creation() {
+        let mut world = World::new();
+        world.create_walker(1, 1, Direction::Down, WalkerType::Mouse);
+        world.create_walker(4, 4, Direction::Up, WalkerType::Cat);
+
+        // The walkers exist
+        assert_eq!(1, world.mice.len());
+        assert_eq!(1, world.cats.len());
+
+        // The source data has been updated to include the walker
+        let walker_data = &world.data[HEADER_SIZE + WALL_BLOCK_SIZE..];
+        // Walkers are packed into one byte, so let's find them
+        assert_eq!(ENTITY_TYPE_MOUSE, walker_data[WORLD_WIDTH * 1 + 1] & ENTITY_TYPE_MASK);
+        assert_eq!(ENTITY_DIRECTION_DOWN, walker_data[WORLD_WIDTH * 1 + 1] & ENTITY_DIRECTION_MASK);
+        assert_eq!(ENTITY_TYPE_CAT, walker_data[WORLD_WIDTH * 4 + 4] & ENTITY_TYPE_MASK);
+        assert_eq!(ENTITY_DIRECTION_UP, walker_data[WORLD_WIDTH * 4 + 4] & ENTITY_DIRECTION_MASK);
     }
 
     /// GIVEN a wall directly ahead
@@ -432,6 +567,198 @@ mod test {
         assert_eq!(Direction::Down, walker_down.get_direction());
         assert_eq!(Direction::Down, walker_left.get_direction());
         assert_eq!(Direction::Down, walker_right.get_direction());
+    }
+
+    /// GIVEN an arrow with no nearby walls
+    /// WHEN a walker encounters that arrow at right angles
+    /// THEN the walker turns in that direction
+    #[test]
+    fn walker_arrow_right_angle_turns() {
+        let mut world = World::new();
+        world.set_arrow(2, 2, ArrowType::Up);
+        world.set_arrow(4, 2, ArrowType::Down);
+        world.set_arrow(6, 4, ArrowType::Left);
+        world.set_arrow(8, 4, ArrowType::Right);
+
+        // Walkers approaching up arrow from left/right
+        world.create_walker(1, 2, Direction::Right, WalkerType::Mouse);
+        world.create_walker(3, 2, Direction::Left, WalkerType::Mouse);
+
+        // Walkers approaching down arrow from left/right
+        world.create_walker(3, 2, Direction::Right, WalkerType::Mouse);
+        world.create_walker(5, 2, Direction::Left, WalkerType::Mouse);
+
+        // Walkers approaching left arrow from top/bottom
+        world.create_walker(6, 3, Direction::Down, WalkerType::Mouse);
+        world.create_walker(6, 5, Direction::Up, WalkerType::Mouse);
+
+        // Walkers approaching right arrow from top/bottom
+        world.create_walker(8, 3, Direction::Down, WalkerType::Mouse);
+        world.create_walker(8, 5, Direction::Up, WalkerType::Mouse);
+
+        // Run for the time is takes for a mouse to move just before one square
+        for _ in 0..59 {
+            world.tick();
+        }
+
+        // Walkers should not have changed their directions yet
+        assert_eq!(Direction::Right, world.mice[0].get_direction());
+        assert_eq!(Direction::Left, world.mice[1].get_direction());
+        assert_eq!(Direction::Right, world.mice[2].get_direction());
+        assert_eq!(Direction::Left, world.mice[3].get_direction());
+        assert_eq!(Direction::Down, world.mice[4].get_direction());
+        assert_eq!(Direction::Up, world.mice[5].get_direction());
+        assert_eq!(Direction::Down, world.mice[6].get_direction());
+        assert_eq!(Direction::Up, world.mice[7].get_direction());
+
+        // Tick the final time required for mice to walk one square
+        world.tick();
+
+        // Walkers should now have been directed by the arrows
+        assert_eq!(Direction::Up, world.mice[0].get_direction());
+        assert_eq!(Direction::Up, world.mice[1].get_direction());
+        assert_eq!(Direction::Down, world.mice[2].get_direction());
+        assert_eq!(Direction::Down, world.mice[3].get_direction());
+        assert_eq!(Direction::Left, world.mice[4].get_direction());
+        assert_eq!(Direction::Left, world.mice[5].get_direction());
+        assert_eq!(Direction::Right, world.mice[6].get_direction());
+        assert_eq!(Direction::Right, world.mice[7].get_direction());
+    }
+
+    /// GIVEN an arrow with no nearby walls
+    /// WHEN a mouse encounters an arrow in opposite direction
+    /// THEN the mouse is turned around
+    /// AND the arrow is unchanged
+    #[test]
+    fn mice_do_not_diminish_arrows_if_opposed() {
+        let mut world = World::new();
+        world.set_arrow(4, 3, ArrowType::Up);
+        world.set_arrow(4, 5, ArrowType::Down);
+        world.set_arrow(3, 4, ArrowType::Left);
+        world.set_arrow(5, 4, ArrowType::Right);
+
+        world.create_walker(4, 2, Direction::Down, WalkerType::Mouse);
+        world.create_walker(4, 6, Direction::Up, WalkerType::Mouse);
+        world.create_walker(2, 4, Direction::Right, WalkerType::Mouse);
+        world.create_walker(6, 4, Direction::Left, WalkerType::Mouse);
+
+        // Run for the time is takes for a mouse to move just before one square
+        for _ in 0..59 {
+            world.tick();
+        }
+
+        // The walkers have not yet encountered the arrows and have their original direction
+        assert_eq!(Direction::Down, world.mice[0].get_direction());
+        assert_eq!(Direction::Up, world.mice[1].get_direction());
+        assert_eq!(Direction::Right, world.mice[2].get_direction());
+        assert_eq!(Direction::Left, world.mice[3].get_direction());
+
+        // Tick the final time required for mice to walk one square
+        world.tick();
+
+        // Walkers should now have been directed by the arrows
+        assert_eq!(Direction::Up, world.mice[0].get_direction());
+        assert_eq!(Direction::Down, world.mice[1].get_direction());
+        assert_eq!(Direction::Left, world.mice[2].get_direction());
+        assert_eq!(Direction::Right, world.mice[3].get_direction());
+
+        // The arrows are unchanged.
+        assert_eq!(ArrowType::Up, world.get_arrow(4, 3));
+        assert_eq!(ArrowType::Down, world.get_arrow(4, 5));
+        assert_eq!(ArrowType::Left, world.get_arrow(3, 4));
+        assert_eq!(ArrowType::Right, world.get_arrow(5, 4));
+    }
+
+    /// GIVEN an arrow with no nearby walls
+    /// WHEN a cat encounters an arrow in opposite direction
+    /// THEN the cat is turned around
+    /// AND the arrow is diminished
+    #[test]
+    fn cats_diminish_arrows_if_opposed() {
+        let mut world = World::new();
+        world.set_arrow(4, 4, ArrowType::Down);
+        world.create_walker(4, 5, Direction::Up, WalkerType::Cat);
+
+        // Walk cat to edge of arrow. Cats move at 2/3 speed of a mouse, so 90 ticks required
+        for _ in 0..89 {
+            world.tick();
+        }
+
+        // The arrow and cat are unchanged
+        assert_eq!(ArrowType::Down, world.get_arrow(4, 4));
+        assert_eq!(Direction::Up, world.cats[0].get_direction());
+
+        // Tick the final time required for cats to walk one square
+        world.tick();
+
+        // The arrow is diminished and the cat turned around
+        assert_eq!(ArrowType::DownHalf, world.get_arrow(4, 4));
+        assert_eq!(Direction::Down, world.cats[0].get_direction());
+    }
+
+    /// GIVEN an arrow with no nearby walls
+    /// WHEN three cats encounter an arrow in opposite direction
+    /// THEN the first two cats are turned around
+    /// AND the last two cats continues
+    /// AND the arrow is removed
+    #[test]
+    fn double_diminish_removes_arrow() {
+        let mut world = World::new();
+        world.set_arrow(4, 4, ArrowType::Down);
+        world.create_walker(4, 5, Direction::Up, WalkerType::Cat);
+        world.create_walker(4, 6, Direction::Up, WalkerType::Cat);
+        world.create_walker(4, 7, Direction::Up, WalkerType::Cat);
+
+        // Walk first cat into the arrow
+        for _ in 0..90 {
+            world.tick();
+        }
+
+        // The arrow is dimished and first cat turned around
+        assert_eq!(ArrowType::DownHalf, world.get_arrow(4, 4));
+        assert_eq!(Direction::Down, world.cats[0].get_direction());
+        assert_eq!(Direction::Up, world.cats[1].get_direction());
+        assert_eq!(Direction::Up, world.cats[2].get_direction());
+
+        // Walk second cat into the arrow
+        for _ in 0..90 {
+            world.tick();
+        }
+
+        // The arrow is removed and the second cat turned around
+        assert_eq!(ArrowType::Empty, world.get_arrow(4, 4));
+        assert_eq!(Direction::Down, world.cats[0].get_direction());
+        assert_eq!(Direction::Down, world.cats[1].get_direction());
+        assert_eq!(Direction::Up, world.cats[2].get_direction());
+
+        // Walk third cat into the 'arrow'
+        for _ in 0..90 {
+            world.tick();
+        }
+
+        // The arrow is still gone and the cat continues on his way
+        assert_eq!(ArrowType::Empty, world.get_arrow(4, 4));
+        assert_eq!(Direction::Down, world.cats[0].get_direction());
+        assert_eq!(Direction::Down, world.cats[1].get_direction());
+        assert_eq!(Direction::Up, world.cats[2].get_direction());
+    }
+
+    /// GIVEN an arrow against a wall
+    /// WHEN a walker is turned into the wall by the arrow
+    /// THEN the normal wall rule are applied, causing the walker to turn
+    #[test]
+    fn walker_turn_into_wall() {
+        let mut world = World::new();
+        world.set_arrow(4, 0, ArrowType::Up);
+        world.create_walker(5, 0, Direction::Left, WalkerType::Mouse);
+
+        // Walk the walker into the arrow
+        for _ in 0..60 {
+            world.tick();
+        }
+
+        // The walker is turned up by the arrow, then right by the wall
+        assert_eq!(Direction::Right, world.mice[0].get_direction());
     }
 
     /// GIVEN a newly created world
