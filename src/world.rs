@@ -212,6 +212,10 @@ impl World {
     /// * `direction`: The direction of the walker
     /// * `walker_type`: The type of walker
     ///
+    /// Return value:
+    /// True if the walker was added. False if it could not be added for some reason
+    /// (e.g. overlaps an existing walker)
+    ///
     /// #examples
     /// ```
     /// use shoko_rocket_rust::{World, Direction, WalkerType};
@@ -224,9 +228,17 @@ impl World {
         y: usize,
         direction: Direction,
         walker_type: WalkerType,
-    ) {
+    ) -> bool {
         assert!(x < WORLD_WIDTH);
         assert!(y < WORLD_HEIGHT);
+
+        // Check if this tile is already occupied
+        let walker_data = &mut self.data[HEADER_SIZE + WALL_BLOCK_SIZE..];
+        let walker_byte = &mut walker_data[y * WORLD_WIDTH + x];
+
+        if (*walker_byte & ENTITY_TYPE_MASK) != ENTITY_TYPE_EMPTY {
+            return false;
+        }
 
         let walker = Walker::new(x as i8, y as i8, direction, walker_type);
         match walker.get_type() {
@@ -235,9 +247,6 @@ impl World {
         }
 
         // Create the corresponding walker in the data array
-        let walker_data = &mut self.data[HEADER_SIZE + WALL_BLOCK_SIZE..];
-        let walker_byte = &mut walker_data[y * WORLD_WIDTH + x];
-
         *walker_byte = *walker_byte & (ARROW_PRESENT_MASK | ARROW_DIRECTION_MASK);
         *walker_byte = *walker_byte
             | match direction {
@@ -251,6 +260,8 @@ impl World {
                 WalkerType::Mouse => ENTITY_TYPE_MOUSE,
                 WalkerType::Cat => ENTITY_TYPE_CAT,
             };
+
+        true
     }
 
     /// Sets the arrow at the specified location
@@ -502,6 +513,19 @@ mod test {
         assert_eq!(ENTITY_DIRECTION_UP, walker_data[WORLD_WIDTH * 4 + 4] & ENTITY_DIRECTION_MASK);
     }
 
+    /// GIVEN an existing walker
+    /// WHEN a new walker is created at the same spot
+    /// THEN the operation is rejected
+    #[test]
+    fn walkers_cannot_be_created_in_same_square() {
+        let mut world = World::new();
+        let created_1 = world.create_walker(0, 0, Direction::Down, WalkerType::Cat);
+        let created_2 = world.create_walker(0, 0, Direction::Down, WalkerType::Cat);
+
+        assert_eq!(true, created_1);
+        assert_eq!(false, created_2);
+    }
+
     /// GIVEN a wall directly ahead
     /// WHEN a walker walks towards/along/away from the wall
     /// THEN the correct turns (right/none/none) are made
@@ -576,25 +600,25 @@ mod test {
     fn walker_arrow_right_angle_turns() {
         let mut world = World::new();
         world.set_arrow(2, 2, ArrowType::Up);
-        world.set_arrow(4, 2, ArrowType::Down);
+        world.set_arrow(4, 3, ArrowType::Down);
         world.set_arrow(6, 4, ArrowType::Left);
-        world.set_arrow(8, 4, ArrowType::Right);
+        world.set_arrow(8, 5, ArrowType::Right);
 
         // Walkers approaching up arrow from left/right
         world.create_walker(1, 2, Direction::Right, WalkerType::Mouse);
         world.create_walker(3, 2, Direction::Left, WalkerType::Mouse);
 
         // Walkers approaching down arrow from left/right
-        world.create_walker(3, 2, Direction::Right, WalkerType::Mouse);
-        world.create_walker(5, 2, Direction::Left, WalkerType::Mouse);
+        world.create_walker(3, 3, Direction::Right, WalkerType::Mouse);
+        world.create_walker(5, 3, Direction::Left, WalkerType::Mouse);
 
         // Walkers approaching left arrow from top/bottom
         world.create_walker(6, 3, Direction::Down, WalkerType::Mouse);
         world.create_walker(6, 5, Direction::Up, WalkerType::Mouse);
 
         // Walkers approaching right arrow from top/bottom
-        world.create_walker(8, 3, Direction::Down, WalkerType::Mouse);
-        world.create_walker(8, 5, Direction::Up, WalkerType::Mouse);
+        world.create_walker(8, 4, Direction::Down, WalkerType::Mouse);
+        world.create_walker(8, 6, Direction::Up, WalkerType::Mouse);
 
         // Run for the time is takes for a mouse to move just before one square
         for _ in 0..59 {
