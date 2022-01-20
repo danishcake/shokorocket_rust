@@ -16,12 +16,21 @@ pub enum WalkResult {
                // e.g. if walking towards each other, away from each other, at right angles etc
 }
 
+/// The overall state of the walker
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum WalkerState {
+    Alive,
+    Dead,
+    Rescued,
+}
+
 /// A walker. This can be a cat or a mouse
 pub struct Walker {
     x: FixedPoint,
     y: FixedPoint,
     direction: Direction,
     walker_type: WalkerType,
+    walker_state: WalkerState,
 }
 
 impl Walker {
@@ -37,6 +46,7 @@ impl Walker {
             y: FixedPoint::new(y, 0),
             direction,
             walker_type,
+            walker_state: WalkerState::Alive,
         }
     }
 
@@ -108,6 +118,23 @@ impl Walker {
     /// Sets the walk direction of the walker
     pub fn set_direction(&mut self, direction: Direction) {
         self.direction = direction;
+    }
+
+    /// Gets the state of the walker
+    pub fn get_state(&self) -> WalkerState {
+        self.walker_state
+    }
+
+    /// Rescues the walker
+    pub fn rescue(&mut self) {
+        assert_eq!(self.walker_state, WalkerState::Alive);
+        self.walker_state = WalkerState::Rescued;
+    }
+
+    /// Kills the walker
+    pub fn kill(&mut self) {
+        assert_eq!(self.walker_state, WalkerState::Alive);
+        self.walker_state = WalkerState::Dead;
     }
 }
 

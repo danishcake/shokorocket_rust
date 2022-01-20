@@ -1,4 +1,7 @@
-use crate::{walker::WalkResult, ArrowType, Direction, Walker, WalkerType};
+use crate::{
+    walker::{self, WalkResult},
+    Direction, TileType, Walker, WalkerState, WalkerType, WorldStateChange,
+};
 use arrayvec::ArrayVec;
 use std::convert::TryInto;
 
@@ -75,7 +78,7 @@ pub struct World {
     data: [u8; 199],
     mice: ArrayVec<Walker, MAX_WALKERS>,
     cats: ArrayVec<Walker, MAX_WALKERS>,
-    arrows: [ArrowType; MAX_TILES],
+    tiles: [TileType; MAX_TILES],
 }
 
 impl World {
@@ -95,7 +98,7 @@ impl World {
             data: [0; 199],
             mice: ArrayVec::new(),
             cats: ArrayVec::new(),
-            arrows: [ArrowType::Empty; MAX_TILES],
+            tiles: [TileType::Empty; MAX_TILES],
         };
 
         // Set the walls along the top/left, which also sets the right/bottom
@@ -270,24 +273,35 @@ impl World {
     /// * `x`: The x coordinate to check. Must be in range 0-11
     /// * `y`: The y coordinate to check. Must be in range 0-8
     /// * `arrow_type`: The type of arrow to set
-    pub fn set_arrow(&mut self, x: usize, y: usize, arrow_type: ArrowType) {
-        World::set_arrow_static(&mut self.arrows, x, y, arrow_type)
+    pub fn set_arrow(&mut self, x: usize, y: usize, tile_type: TileType) {
+        // TODO: Check tile is empty of rockets/holes
+        // TODO: Handle stock of spare arrows
+        World::set_tile_static(&mut self.tiles, x, y, tile_type)
     }
 
-    /// Sets the arrow at the specified location
+    /// Sets the tile at the specified location
     ///
     /// Arguments:
-    /// * `arrows`: The internal representation of the arrows
     /// * `x`: The x coordinate to check. Must be in range 0-11
     /// * `y`: The y coordinate to check. Must be in range 0-8
     /// * `arrow_type`: The type of arrow to set
-    fn set_arrow_static(
-        arrows: &mut [ArrowType; MAX_TILES],
-        x: usize,
-        y: usize,
-        arrow_type: ArrowType,
-    ) {
-        arrows[y * WORLD_WIDTH + x] = arrow_type;
+    pub fn set_tile(&mut self, x: usize, y: usize, tile_type: TileType) {
+        World::set_tile_static(&mut self.tiles, x, y, tile_type)
+    }
+
+    /// Sets the tile at the specified location. No checking is performed to
+    /// ensure that the tile is empty - use the set_arrow method for this
+    ///
+    /// Arguments:
+    /// * `tiles`: The internal representation of the tiles
+    /// * `x`: The x coordinate to check. Must be in range 0-11
+    /// * `y`: The y coordinate to check. Must be in range 0-8
+    /// * `tile_type`: The type of tile to set
+    fn set_tile_static(tiles: &mut [TileType; MAX_TILES], x: usize, y: usize, tile_type: TileType) {
+        assert!(x < WORLD_WIDTH);
+        assert!(y < WORLD_HEIGHT);
+
+        tiles[y * WORLD_WIDTH + x] = tile_type;
     }
 
     /// Gets the arrow at the specified location
@@ -305,8 +319,8 @@ impl World {
     /// let mut world = World::new();
     /// world.get_arrow(0, 0);
     /// ```
-    pub fn get_arrow(&self, x: usize, y: usize) -> ArrowType {
-        return World::get_arrow_static(&self.arrows, x, y);
+    pub fn get_arrow(&self, x: usize, y: usize) -> TileType {
+        return World::get_arrow_static(&self.tiles, x, y);
     }
 
     /// Gets the arrow at the specified location
@@ -318,12 +332,15 @@ impl World {
     ///
     /// Return value:
     /// The type of arrow present at the specified coordinate
-    fn get_arrow_static(arrows: &[ArrowType; MAX_TILES], x: usize, y: usize) -> ArrowType {
+    fn get_arrow_static(arrows: &[TileType; MAX_TILES], x: usize, y: usize) -> TileType {
         assert!(x < WORLD_WIDTH);
         assert!(y < WORLD_HEIGHT);
 
         return arrows[y * WORLD_WIDTH + x];
     }
+
+    /// Resets the state to that specified in the serialised form
+    pub fn reset() {}
 
     /// Advances the simulation state of the world
     /// * Mice move forward 3 units
@@ -340,19 +357,18 @@ impl World {
     /// * Cats are directed by arrows, and if turned around, consume the arrow
     /// On reaching a new grid, walkers check walls
     /// On all mice rescued, victory
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self) -> WorldStateChange {
+        let mut world_state_change = WorldStateChange::NoChange;
+
         // 1. Advance mice and cats
         let all_walkers = self.mice.iter_mut().chain(self.cats.iter_mut());
         for walker in all_walkers {
             if walker.walk() == WalkResult::NewSquare {
                 // 2. Check holes, rockets
-                // This will require a 'world_state'
-                // -> Ok, Win, Lose
-                // This could be the return type of this function
-                // Also need to consider how to reset to the initial state
+                World::check_rockets_and_holes(&mut self.tiles, walker);
 
                 // 3. Check arrows
-                World::check_arrows(&mut self.arrows, walker);
+                World::check_arrows(&mut self.tiles, walker);
 
                 // 4. Check walls
                 World::check_walls(&self.data, walker);
@@ -360,6 +376,38 @@ impl World {
         }
 
         // 5. Check cat/mouse collisions
+
+        // 6. Check if any mice died to holes, or any cats were rescued
+        if self
+            .mice
+            .iter_mut()
+            .any(|walker| walker.get_state() == WalkerState::Dead)
+            || self
+                .cats
+                .iter_mut()
+                .any(|walker| walker.get_state() == WalkerState::Rescued)
+        {
+            world_state_change = WorldStateChange::Lose;
+        }
+
+        // 7. Check if all mice have been rescued
+        if !self.mice.is_empty()
+            && self
+                .mice
+                .iter()
+                .all(|walker| (*walker).get_state() == WalkerState::Rescued)
+        {
+            world_state_change = WorldStateChange::Win;
+        }
+
+        // 8. Remove dead/rescued walkers
+        self.mice
+            .retain(|walker| walker.get_state() == WalkerState::Alive);
+        self.cats
+            .retain(|walker| walker.get_state() == WalkerState::Alive);
+
+        // 9. Return the new world state for the user to handle
+        world_state_change
     }
 
     /// Handles collisions with walls
@@ -399,12 +447,12 @@ impl World {
     /// * If a cat is turned 180 degrees then the arrow is diminished
     ///
     /// Arguments:
-    /// * `arrows`: The active arrows
+    /// * `tile`: The tiles
     /// * `walker`: The Walker to check
-    fn check_arrows(arrows: &mut [ArrowType; MAX_TILES], walker: &mut Walker) {
+    fn check_arrows(tiles: &mut [TileType; MAX_TILES], walker: &mut Walker) {
         let (x, y) =
             (walker.get_x().integer_part() as usize, walker.get_y().integer_part() as usize);
-        let arrow = World::get_arrow_static(arrows, x, y);
+        let arrow = World::get_arrow_static(tiles, x, y);
         let arrow_direction = arrow.try_into();
         match arrow_direction {
             Ok(direction) => {
@@ -412,14 +460,37 @@ impl World {
                 if walker.get_type() == WalkerType::Cat
                     && walker.get_direction().turn_around() == direction
                 {
-                    World::set_arrow_static(arrows, x, y, arrow.diminish());
+                    World::set_tile_static(tiles, x, y, arrow.diminish());
                 }
                 walker.set_direction(direction);
             }
             Err(_) => {
-                // Indicates an empty tile, which is fine
+                // Indicates an empty/hole/rocket tile, which is fine
             }
         };
+    }
+
+    /// Handles collisions between holes/rockets and walkers
+    /// * Holes kill everything
+    /// * Rockets rescue mice
+    /// * Cats kill rockets
+    /// * Mouse death changes world state to a loss
+    /// * Rocket death changes world state to a loss
+    /// * Rescue of all mice changes world state to a win
+    ///
+    /// Arguments:
+    /// * `tiles`: The tiles
+    /// * `walker`: The Walker to check
+    fn check_rockets_and_holes(tiles: &mut [TileType; MAX_TILES], walker: &mut Walker) {
+        let (x, y) =
+            (walker.get_x().integer_part() as usize, walker.get_y().integer_part() as usize);
+        let tile = tiles[y * WORLD_WIDTH + x];
+
+        match tile {
+            TileType::Hole => walker.kill(),
+            TileType::Rocket => walker.rescue(),
+            _ => {}
+        }
     }
 }
 
@@ -599,10 +670,10 @@ mod test {
     #[test]
     fn walker_arrow_right_angle_turns() {
         let mut world = World::new();
-        world.set_arrow(2, 2, ArrowType::Up);
-        world.set_arrow(4, 3, ArrowType::Down);
-        world.set_arrow(6, 4, ArrowType::Left);
-        world.set_arrow(8, 5, ArrowType::Right);
+        world.set_arrow(2, 2, TileType::Up);
+        world.set_arrow(4, 3, TileType::Down);
+        world.set_arrow(6, 4, TileType::Left);
+        world.set_arrow(8, 5, TileType::Right);
 
         // Walkers approaching up arrow from left/right
         world.create_walker(1, 2, Direction::Right, WalkerType::Mouse);
@@ -656,10 +727,10 @@ mod test {
     #[test]
     fn mice_do_not_diminish_arrows_if_opposed() {
         let mut world = World::new();
-        world.set_arrow(4, 3, ArrowType::Up);
-        world.set_arrow(4, 5, ArrowType::Down);
-        world.set_arrow(3, 4, ArrowType::Left);
-        world.set_arrow(5, 4, ArrowType::Right);
+        world.set_arrow(4, 3, TileType::Up);
+        world.set_arrow(4, 5, TileType::Down);
+        world.set_arrow(3, 4, TileType::Left);
+        world.set_arrow(5, 4, TileType::Right);
 
         world.create_walker(4, 2, Direction::Down, WalkerType::Mouse);
         world.create_walker(4, 6, Direction::Up, WalkerType::Mouse);
@@ -687,10 +758,10 @@ mod test {
         assert_eq!(Direction::Right, world.mice[3].get_direction());
 
         // The arrows are unchanged.
-        assert_eq!(ArrowType::Up, world.get_arrow(4, 3));
-        assert_eq!(ArrowType::Down, world.get_arrow(4, 5));
-        assert_eq!(ArrowType::Left, world.get_arrow(3, 4));
-        assert_eq!(ArrowType::Right, world.get_arrow(5, 4));
+        assert_eq!(TileType::Up, world.get_arrow(4, 3));
+        assert_eq!(TileType::Down, world.get_arrow(4, 5));
+        assert_eq!(TileType::Left, world.get_arrow(3, 4));
+        assert_eq!(TileType::Right, world.get_arrow(5, 4));
     }
 
     /// GIVEN an arrow with no nearby walls
@@ -700,7 +771,7 @@ mod test {
     #[test]
     fn cats_diminish_arrows_if_opposed() {
         let mut world = World::new();
-        world.set_arrow(4, 4, ArrowType::Down);
+        world.set_arrow(4, 4, TileType::Down);
         world.create_walker(4, 5, Direction::Up, WalkerType::Cat);
 
         // Walk cat to edge of arrow. Cats move at 2/3 speed of a mouse, so 90 ticks required
@@ -709,14 +780,14 @@ mod test {
         }
 
         // The arrow and cat are unchanged
-        assert_eq!(ArrowType::Down, world.get_arrow(4, 4));
+        assert_eq!(TileType::Down, world.get_arrow(4, 4));
         assert_eq!(Direction::Up, world.cats[0].get_direction());
 
         // Tick the final time required for cats to walk one square
         world.tick();
 
         // The arrow is diminished and the cat turned around
-        assert_eq!(ArrowType::DownHalf, world.get_arrow(4, 4));
+        assert_eq!(TileType::DownHalf, world.get_arrow(4, 4));
         assert_eq!(Direction::Down, world.cats[0].get_direction());
     }
 
@@ -728,7 +799,7 @@ mod test {
     #[test]
     fn double_diminish_removes_arrow() {
         let mut world = World::new();
-        world.set_arrow(4, 4, ArrowType::Down);
+        world.set_arrow(4, 4, TileType::Down);
         world.create_walker(4, 5, Direction::Up, WalkerType::Cat);
         world.create_walker(4, 6, Direction::Up, WalkerType::Cat);
         world.create_walker(4, 7, Direction::Up, WalkerType::Cat);
@@ -739,7 +810,7 @@ mod test {
         }
 
         // The arrow is dimished and first cat turned around
-        assert_eq!(ArrowType::DownHalf, world.get_arrow(4, 4));
+        assert_eq!(TileType::DownHalf, world.get_arrow(4, 4));
         assert_eq!(Direction::Down, world.cats[0].get_direction());
         assert_eq!(Direction::Up, world.cats[1].get_direction());
         assert_eq!(Direction::Up, world.cats[2].get_direction());
@@ -750,7 +821,7 @@ mod test {
         }
 
         // The arrow is removed and the second cat turned around
-        assert_eq!(ArrowType::Empty, world.get_arrow(4, 4));
+        assert_eq!(TileType::Empty, world.get_arrow(4, 4));
         assert_eq!(Direction::Down, world.cats[0].get_direction());
         assert_eq!(Direction::Down, world.cats[1].get_direction());
         assert_eq!(Direction::Up, world.cats[2].get_direction());
@@ -761,7 +832,7 @@ mod test {
         }
 
         // The arrow is still gone and the cat continues on his way
-        assert_eq!(ArrowType::Empty, world.get_arrow(4, 4));
+        assert_eq!(TileType::Empty, world.get_arrow(4, 4));
         assert_eq!(Direction::Down, world.cats[0].get_direction());
         assert_eq!(Direction::Down, world.cats[1].get_direction());
         assert_eq!(Direction::Up, world.cats[2].get_direction());
@@ -773,7 +844,7 @@ mod test {
     #[test]
     fn walker_turn_into_wall() {
         let mut world = World::new();
-        world.set_arrow(4, 0, ArrowType::Up);
+        world.set_arrow(4, 0, TileType::Up);
         world.create_walker(5, 0, Direction::Left, WalkerType::Mouse);
 
         // Walk the walker into the arrow
@@ -792,12 +863,112 @@ mod test {
     fn arrow_get_set() {
         let mut world = World::new();
 
-        assert_eq!(ArrowType::Empty, world.get_arrow(0, 0));
-        world.set_arrow(0, 0, ArrowType::Right);
-        assert_eq!(ArrowType::Right, world.get_arrow(0, 0));
+        assert_eq!(TileType::Empty, world.get_arrow(0, 0));
+        world.set_arrow(0, 0, TileType::Right);
+        assert_eq!(TileType::Right, world.get_arrow(0, 0));
 
-        assert_eq!(ArrowType::Empty, world.get_arrow(7, 3));
-        world.set_arrow(7, 3, ArrowType::Right);
-        assert_eq!(ArrowType::Right, world.get_arrow(7, 3));
+        assert_eq!(TileType::Empty, world.get_arrow(7, 3));
+        world.set_arrow(7, 3, TileType::Right);
+        assert_eq!(TileType::Right, world.get_arrow(7, 3));
+    }
+
+    /// GIVEN a world with a hole one unit to the right of a cat
+    /// WHEN the cat walks into the hole
+    /// THEN the cat is killed
+    /// AND the world state does not change
+    #[test]
+    fn holes_kill_cats() {
+        let mut world = World::new();
+
+        world.set_tile(1, 0, TileType::Hole);
+        world.create_walker(0, 0, Direction::Right, WalkerType::Cat);
+
+        for _ in 0..89 {
+            world.tick();
+        }
+
+        // After 89 ticks the cat is still alive
+        assert_eq!(1, world.cats.len());
+
+        // The 90th tick kills the cat as it falls into the hole
+        let world_state_change = world.tick();
+
+        assert_eq!(WorldStateChange::NoChange, world_state_change);
+        assert_eq!(0, world.cats.len());
+    }
+
+    /// GIVEN a world with a hole one unit to the right of a mouse
+    /// WHEN the mouse walks into the hole
+    /// THEN the mouse is killed
+    /// AND the world state changes to lose
+    #[test]
+    fn holes_kill_mice_and_cause_loss() {
+        let mut world = World::new();
+
+        world.set_tile(1, 0, TileType::Hole);
+        world.create_walker(0, 0, Direction::Right, WalkerType::Mouse);
+
+        for _ in 0..59 {
+            world.tick();
+        }
+
+        // After 59 ticks the mouse is still alive
+        assert_eq!(1, world.mice.len());
+
+        // The 90th tick kills the mouse as it falls into the hole
+        let world_state_change = world.tick();
+
+        assert_eq!(WorldStateChange::Lose, world_state_change);
+        assert_eq!(0, world.mice.len());
+    }
+
+    /// GIVEN a world with a rocket one unit to the right of a cat
+    /// WHEN the cat walks into the rocket
+    /// THEN the cat is rescued
+    /// AND the world state changes to lose
+    #[test]
+    fn rockets_rescue_cats_and_cause_loss() {
+        let mut world = World::new();
+
+        world.set_tile(1, 0, TileType::Rocket);
+        world.create_walker(0, 0, Direction::Right, WalkerType::Cat);
+
+        for _ in 0..89 {
+            world.tick();
+        }
+
+        // After 89 ticks the cat is still alive
+        assert_eq!(1, world.cats.len());
+
+        // The 90th tick rescues the cat as it hits the rocket
+        let world_state_change = world.tick();
+
+        assert_eq!(0, world.cats.len());
+        assert_eq!(WorldStateChange::Lose, world_state_change);
+    }
+
+    /// GIVEN a world with a rocket one unit to the right of a mouse
+    /// WHEN the mouse walks into the rocket
+    /// THEN the mouse is rescued
+    /// AND the world state changes to win
+    #[test]
+    fn rockets_rescue_mice_and_cause_win() {
+        let mut world = World::new();
+
+        world.set_tile(1, 0, TileType::Rocket);
+        world.create_walker(0, 0, Direction::Right, WalkerType::Mouse);
+
+        for _ in 0..59 {
+            world.tick();
+        }
+
+        // After 59 ticks the mouse is still alive
+        assert_eq!(1, world.mice.len());
+
+        // The 90th tick rescues the mouse as it falls into the hole
+        let world_state_change = world.tick();
+
+        assert_eq!(WorldStateChange::Win, world_state_change);
+        assert_eq!(0, world.mice.len());
     }
 }
