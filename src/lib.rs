@@ -1,3 +1,5 @@
+#![no_std]
+
 mod direction;
 mod fixed_point;
 mod tile_type;

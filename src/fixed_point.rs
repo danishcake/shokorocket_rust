@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign, Sub, SubAssign};
+use core::ops::{Add, AddAssign, Sub, SubAssign};
 // TODO: Implement use std::cmp::{Ord, PartialOrd};
 
 /// Represents a fixed point datatype tailored to Chu-chu Rocket clones
@@ -41,7 +41,8 @@ impl FixedPoint {
     /// ```
     pub fn from_float(value: f32) -> FixedPoint {
         let integral_part = value as i8;
-        let remainder = value - value.trunc();
+        // no_std means I can't use f32.trunc(), so instead we convert integral_part back to f32
+        let remainder = value - integral_part as f32;
         if remainder > 0f32 {
             FixedPoint::new(integral_part, 0) + FixedPoint::new(0, (remainder * 360.0f32) as i16)
         } else {

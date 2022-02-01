@@ -3,7 +3,7 @@ use crate::{
     Direction, TileType, Walker, WalkerState, WalkerType, WorldStateChange,
 };
 use arrayvec::ArrayVec;
-use std::convert::TryInto;
+use core::convert::TryInto;
 
 /// The width of the world
 pub const WORLD_WIDTH: usize = 12;

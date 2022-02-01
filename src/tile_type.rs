@@ -1,5 +1,5 @@
 use super::Direction;
-use std::convert::TryFrom;
+use core::convert::TryFrom;
 
 /// Represents a tile
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
