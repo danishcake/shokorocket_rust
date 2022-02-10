@@ -1,0 +1,13 @@
+[package]
+name = "bin"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+st7735-lcd = { version = "0.8.1" }
+pygamer = { git = "https://github.com/atsamd-rs/atsamd" }
+panic-halt = { version = "0.2.0" }
+embedded-graphics = { version = "0.7.1" }
+platform = { path = "../platform" }

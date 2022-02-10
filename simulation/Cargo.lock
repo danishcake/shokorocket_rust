@@ -65,17 +65,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bin"
-version = "0.1.0"
-dependencies = [
- "embedded-graphics",
- "panic-halt",
- "platform",
- "pygamer",
- "st7735-lcd",
-]
-
-[[package]]
 name = "bitfield"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -237,15 +226,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0744126afe1a6dd7f394cb50a716dbe086cb06e255e53d8d0185d82828358fb5"
 
 [[package]]
-name = "platform"
-version = "0.1.0"
-dependencies = [
- "embedded-graphics",
- "pygamer",
- "st7735-lcd",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -257,7 +237,7 @@ dependencies = [
 [[package]]
 name = "pygamer"
 version = "0.9.0"
-source = "git+https://github.com/atsamd-rs/atsamd#62f5b959341545ff07b3b03e98b9249a3519ee0b"
+source = "git+https://github.com/atsamd-rs/atsamd#8da63783b0ac21647c59bda20085d8ebcba19fa2"
 dependencies = [
  "atsamd-hal",
  "cortex-m",
@@ -331,6 +311,10 @@ name = "shoko_rocket_rust"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "embedded-graphics",
+ "panic-halt",
+ "pygamer",
+ "st7735-lcd",
 ]
 
 [[package]]
