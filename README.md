@@ -3,9 +3,17 @@ A clone of Chu Chu Rocket, targetting the Adafruit Pygamer
 
 ## Structure
 There are three main components
+* common. This has structures shared by all projects
 * simuation. This is platform independent code that simulates the state of the game.
 * platform. This is glue code that is responsible for calling the simulation code, then rendering the results.
 * bin. This is the entrypoint
+
+bin -> simulation -> common
+    -> platform   -> common
+    -> common
+    -> render -> simulation
+              -> platform
+              -> common
 
 ## Adafruit Pygamer
 To build execute `cargo build`. The target architecture will automatically be set by `.cargo/config`.

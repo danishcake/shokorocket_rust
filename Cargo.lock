@@ -68,10 +68,12 @@ dependencies = [
 name = "bin"
 version = "0.1.0"
 dependencies = [
+ "common",
  "embedded-graphics",
  "panic-halt",
  "platform",
  "pygamer",
+ "simulation",
  "st7735-lcd",
 ]
 
@@ -98,6 +100,10 @@ name = "byteorder"
 version = "1.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
+
+[[package]]
+name = "common"
+version = "0.1.0"
 
 [[package]]
 name = "cortex-m"
@@ -240,6 +246,7 @@ checksum = "0744126afe1a6dd7f394cb50a716dbe086cb06e255e53d8d0185d82828358fb5"
 name = "platform"
 version = "0.1.0"
 dependencies = [
+ "common",
  "embedded-graphics",
  "pygamer",
  "st7735-lcd",
@@ -327,10 +334,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a9f47faea3cad316faa914d013d24f471cd90bfca1a0c70f05a3f42c6441e99"
 
 [[package]]
-name = "shoko_rocket_rust"
+name = "simulation"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "common",
+ "world_macros",
 ]
 
 [[package]]

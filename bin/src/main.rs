@@ -6,7 +6,6 @@ use panic_halt as _;
 use pygamer::adc::Adc;
 use pygamer::gpio::{OpenDrain, Output, Pa0, Pa23, Pb13, Pb14, Pb15, Pb5, PfC, PushPull};
 use pygamer::pins::ButtonReader;
-use pygamer::pwm::Pwm2;
 use pygamer::sercom::SPIMaster4;
 use pygamer::{entry, hal, pac, Pins};
 
@@ -25,7 +24,9 @@ use hal::watchdog::{Watchdog, WatchdogTimeout};
 use pac::{CorePeripherals, Peripherals};
 use st7735_lcd::ST7735;
 
-use platform::input::{read_input, InputState, JoystickReaderWithAdc};
+use common::input::InputState;
+use platform::input::{read_input, JoystickReaderWithAdc};
+use simulation::StateMachine;
 
 /// A type alias for the Pygamer display
 type PygamerDisplay = ST7735<
@@ -38,9 +39,6 @@ type PygamerDisplay = ST7735<
     Pa0<Output<PushPull>>,
 >;
 
-/// Type alias for the Pygamer backlight
-type PygamerBacklight = Pwm2<pygamer::gpio::v2::PA01>;
-
 /// Type alias for the Pygamer onboard LED
 type PygamerOnboardRedLed = Pa23<Output<OpenDrain>>;
 
@@ -52,19 +50,17 @@ struct Resources<'a> {
 struct Outputs<'a> {
     led: &'a mut PygamerOnboardRedLed,
     display: &'a mut PygamerDisplay,
-    // backlight: &'a mut PygamerBacklight,
 }
 
 /// The state of the game
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 struct GameState {
-    led_state: bool,
+    state_machine: StateMachine,
 }
 
 fn simulate(game_state: &mut GameState, input: &InputState) {
-    if input.btn_a.pressed {
-        game_state.led_state = !game_state.led_state
-    }
+    game_state.state_machine.tick(input);
+    // TODO: Inject input here
+    // Maybe factor out a common project so we can have input state, then the impl in the platform?
 }
 
 fn render(game_state: &GameState, outputs: &mut Outputs, resources: &Resources) {
@@ -132,22 +128,25 @@ fn main() -> ! {
     let mut tcounter = TimerCounter::tc5_(&timer_clock, peripherals.TC5, &mut peripherals.MCLK);
     tcounter.start(60.hz());
 
-    let mut game_state = GameState { led_state: true };
+    let mut game_state = GameState {
+        state_machine: StateMachine::new(),
+    };
 
     let mut outputs = Outputs {
         led: &mut pins.led_pin.into_open_drain_output(&mut pins.port),
         display: &mut display,
-        // backlight: &mut backlight,
     };
 
     let resources = Resources {
         text_style: MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE),
     };
 
+    let last_input = InputState::new();
     // Main loop.
     loop {
         // Read input
-        let input = read_input(&mut button_reader, &mut joystick_reader);
+        let input = read_input(&mut button_reader, &mut joystick_reader, &last_input);
+        last_input = input;
 
         // Simulate
         simulate(&mut game_state, &input);
@@ -156,6 +155,7 @@ fn main() -> ! {
         render(&game_state, &mut outputs, &resources);
 
         // Sleep for remainder of frame
+        // TODO: This probably doesn't work. Measure elapsed time!
         let _ = nb::block!(tcounter.wait());
     }
 }

@@ -9,3 +9,4 @@ edition = "2021"
 st7735-lcd = { version = "0.8.1" }
 pygamer = { git = "https://github.com/atsamd-rs/atsamd" }
 embedded-graphics = { version = "0.7.1" }
+common = { path = "../common" }

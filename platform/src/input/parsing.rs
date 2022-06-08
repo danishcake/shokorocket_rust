@@ -1,57 +1,8 @@
+use common::input::{ButtonState, InputState};
 use pygamer::buttons::{ButtonReader, Keys};
 use pygamer::hal;
 use pygamer::pac::ADC1;
 use pygamer::pins::JoystickReader;
-
-/// The state of a single button
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct ButtonState {
-    /// If the button is currently down
-    pub down: bool,
-    /// If the button has just been pressed
-    pub pressed: bool,
-    /// If the button has just been released
-    pub released: bool,
-}
-
-impl ButtonState {
-    fn new() -> ButtonState {
-        ButtonState {
-            down: false,
-            pressed: false,
-            released: false,
-        }
-    }
-
-    fn up() -> ButtonState {
-        ButtonState {
-            down: false,
-            pressed: false,
-            released: true,
-        }
-    }
-
-    fn down() -> ButtonState {
-        ButtonState {
-            down: true,
-            pressed: true,
-            released: false,
-        }
-    }
-}
-
-/// The state of all input devices
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct InputState {
-    /// Joystick sensor reading in range [-2048, 2047]
-    pub js_x: i16,
-    pub js_y: i16,
-    /// Button state
-    pub btn_a: ButtonState,
-    pub btn_b: ButtonState,
-    pub btn_start: ButtonState,
-    pub btn_select: ButtonState,
-}
 
 /// A joystick reader and the associated adc
 pub struct JoystickReaderWithAdc<'a> {
@@ -65,15 +16,9 @@ pub struct JoystickReaderWithAdc<'a> {
 pub fn read_input(
     button_reader: &mut ButtonReader,
     joystick: &mut JoystickReaderWithAdc,
+    last_output: &InputState
 ) -> InputState {
-    let mut input_state: InputState = InputState {
-        js_x: 0,
-        js_y: 0,
-        btn_a: ButtonState::new(),
-        btn_b: ButtonState::new(),
-        btn_start: ButtonState::new(),
-        btn_select: ButtonState::new(),
-    };
+    let mut input_state = InputState::new();
 
     // Grab the change events, which also updates the instantaneous state in button_reader.last
     for ev in button_reader.events() {
@@ -97,9 +42,76 @@ pub fn read_input(
 
     // Read the joystick state
     let (x, y) = joystick.reader.read(&mut joystick.adc);
-
     input_state.js_x = (x as i16) - 2048i16;
     input_state.js_y = (y as i16) - 2048i16;
+
+
+    // Detect joystick flicks
+    // These are defined as a movement to 75% outside the center
+    // after having been in the central 25%. This can occur in either axis
+    // They are held until the joystick remains outside the central 50%
+    let dead: i16 = 512;
+    let flick: i16 = 1536;
+
+    let js_in_up_flick = input_state.js_y > flick;
+    let js_in_down_flick = input_state.js_y < -flick;
+    let js_in_right_flick = input_state.js_x > flick;
+    let js_in_left_flick = input_state.js_x < -flick;
+
+    let js_in_up_dead = input_state.js_y < dead;
+    let js_in_down_dead = input_state.js_y > -dead;
+    let js_in_right_dead = input_state.js_x < dead;
+    let js_in_left_dead = input_state.js_x > -dead;
+
+    // Copy previous js flick state
+    input_state.js_up.down = last_output.js_up.down;
+    input_state.js_down.down = last_output.js_down.down;
+    input_state.js_right.down = last_output.js_right.down;
+    input_state.js_left.down = last_output.js_left.down;
+
+    // End flicks if entering dead zone
+    if js_in_up_dead && last_output.js_up.down {
+        input_state.js_up.released = true;
+        input_state.js_up.pressed = false;
+        input_state.js_up.down = false;
+    }
+    if js_in_down_dead && last_output.js_down.down {
+        input_state.js_down.released = true;
+        input_state.js_down.pressed = true;
+        input_state.js_down.down = true;
+    }
+    if js_in_right_dead && last_output.js_right.down {
+        input_state.js_right.released = true;
+        input_state.js_right.pressed = false;
+        input_state.js_right.down = false;
+    }
+    if js_in_left_dead && last_output.js_left.down {
+        input_state.js_left.released = true;
+        input_state.js_left.pressed = false;
+        input_state.js_left.down = false;
+    }
+
+    // Start flicks if entering flick zone
+    if js_in_up_flick && !last_output.js_up.down {
+        input_state.js_up.released = false;
+        input_state.js_up.pressed = true;
+        input_state.js_up.down = true;
+    }
+    if js_in_down_flick && !last_output.js_down.down {
+        input_state.js_down.released = false;
+        input_state.js_down.pressed = true;
+        input_state.js_down.down = true;
+    }
+    if js_in_right_flick && !last_output.js_right.down {
+        input_state.js_right.released = false;
+        input_state.js_right.pressed = true;
+        input_state.js_right.down = true;
+    }
+    if js_in_left_flick && !last_output.js_left.down {
+        input_state.js_left.released = false;
+        input_state.js_left.pressed = true;
+        input_state.js_left.down = true;
+    }
 
     input_state
 }

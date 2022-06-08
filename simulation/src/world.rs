@@ -13,10 +13,15 @@ pub const WORLD_HEIGHT: usize = 9;
 const MAX_WALKERS: usize = WORLD_WIDTH * WORLD_HEIGHT;
 /// The maximum number of tiles, if all squares were filled with tiles
 const MAX_TILES: usize = WORLD_WIDTH * WORLD_HEIGHT;
-/// The size of the header (e.g. the name and author of the map)
-const HEADER_SIZE: usize = 64;
+/// The map author field
+const MAP_NAME_SIZE: usize = 32;
+const MAP_NAME_OFFSET: usize = 0;
+/// The map name field
+const MAP_AUTHOR_SIZE: usize = 32;
+const MAP_AUTHOR_OFFSET: usize = MAP_NAME_OFFSET + MAP_NAME_SIZE;
 /// The size of the wall block
 const WALL_BLOCK_SIZE: usize = 27;
+const WALL_BLOCK_OFFSET: usize = MAP_AUTHOR_OFFSET + MAP_AUTHOR_SIZE;
 /// The masks used to pack the left walls. There are four walls packed into each byte
 const LEFT_WALL_MASK: [u8; 4] = [0b00000010, 0b00001000, 0b00100000, 0b10000000];
 /// The masks uses to pack the top walls.
@@ -123,7 +128,7 @@ impl World {
     ///
     /// Return value:
     /// A tuple containing the wall index and the mask required to extract the given direction
-    fn get_wrapped_wall_index_and_mask(x: usize, y: usize, direction: Direction) -> (usize, u8) {
+    const fn get_wrapped_wall_index_and_mask(x: usize, y: usize, direction: Direction) -> (usize, u8) {
         assert!(x < WORLD_WIDTH);
         assert!(y < WORLD_HEIGHT);
 
@@ -136,6 +141,20 @@ impl World {
         };
 
         ((e_y * WORLD_WIDTH + e_x) / 4, mask)
+    }
+
+    fn set_wall_static(data: &mut [u8; 199], x: usize, y: usize, direction: Direction, present: bool) {
+        assert!(x < WORLD_WIDTH);
+        assert!(y < WORLD_HEIGHT);
+
+        let (wall_index, mask) = World::get_wrapped_wall_index_and_mask(x, y, direction);
+        let byte = &mut data[WALL_BLOCK_OFFSET + wall_index];
+
+        if present {
+            *byte = *byte | mask;
+        } else {
+            *byte = *byte & !mask;
+        }
     }
 
     /// Sets a wall present/non-present
@@ -154,17 +173,7 @@ impl World {
     /// assert!(world.get_wall(0, 0, Direction::Down));
     /// ```
     pub fn set_wall(&mut self, x: usize, y: usize, direction: Direction, present: bool) {
-        assert!(x < WORLD_WIDTH);
-        assert!(y < WORLD_HEIGHT);
-
-        let (wall_index, mask) = World::get_wrapped_wall_index_and_mask(x, y, direction);
-        let byte = &mut self.data[HEADER_SIZE + wall_index];
-
-        if present {
-            *byte = *byte | mask;
-        } else {
-            *byte = *byte & !mask;
-        }
+        World::set_wall_static(&mut self.data, x, y, direction, present);
     }
 
     /// Gets the presence of a wall in the specified position and direction
@@ -182,7 +191,7 @@ impl World {
         assert!(y < WORLD_HEIGHT);
 
         let (wall_index, mask) = World::get_wrapped_wall_index_and_mask(x, y, direction);
-        let byte = &wall_data[HEADER_SIZE + wall_index];
+        let byte = &wall_data[WALL_BLOCK_OFFSET + wall_index];
         return *byte & mask == mask;
     }
 
@@ -236,7 +245,7 @@ impl World {
         assert!(y < WORLD_HEIGHT);
 
         // Check if this tile is already occupied
-        let walker_data = &mut self.data[HEADER_SIZE + WALL_BLOCK_SIZE..];
+        let walker_data = &mut self.data[WALL_BLOCK_OFFSET + WALL_BLOCK_SIZE..];
         let walker_byte = &mut walker_data[y * WORLD_WIDTH + x];
 
         if (*walker_byte & ENTITY_TYPE_MASK) != ENTITY_TYPE_EMPTY {

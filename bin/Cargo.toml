@@ -11,3 +11,5 @@ pygamer = { git = "https://github.com/atsamd-rs/atsamd" }
 panic-halt = { version = "0.2.0" }
 embedded-graphics = { version = "0.7.1" }
 platform = { path = "../platform" }
+simulation = { path = "../simulation" }
+common = { path = "../common" }
