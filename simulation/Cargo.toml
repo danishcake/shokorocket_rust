@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 arrayvec = { version = "0.7.1", default-features = false }
 common = { path = "../common" }
+world_macros = { path = "../world_macros" }
+

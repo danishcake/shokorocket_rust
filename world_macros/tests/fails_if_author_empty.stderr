@@ -1,0 +1,5 @@
+error: String cannot be empty
+ --> tests/fails_if_author_empty.rs:5:32
+  |
+5 |     let _map = puzzle!("Name", "",
+  |                                ^^

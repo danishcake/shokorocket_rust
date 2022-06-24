@@ -4,5 +4,6 @@ members = [
   "common",
   "simulation",
   "platform",
-  "bin"
+  "bin",
+  "world_macros"
 ]
