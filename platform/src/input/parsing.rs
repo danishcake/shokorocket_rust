@@ -1,4 +1,4 @@
-use common::input::{ButtonState, InputState};
+pub use common::input::{ButtonState, InputState};
 use pygamer::buttons::{ButtonReader, Keys};
 use pygamer::hal;
 use pygamer::pac::ADC1;
@@ -16,7 +16,7 @@ pub struct JoystickReaderWithAdc<'a> {
 pub fn read_input(
     button_reader: &mut ButtonReader,
     joystick: &mut JoystickReaderWithAdc,
-    last_output: &InputState
+    last_output: &InputState,
 ) -> InputState {
     let mut input_state = InputState::new();
 
@@ -44,7 +44,6 @@ pub fn read_input(
     let (x, y) = joystick.reader.read(&mut joystick.adc);
     input_state.js_x = (x as i16) - 2048i16;
     input_state.js_y = (y as i16) - 2048i16;
-
 
     // Detect joystick flicks
     // These are defined as a movement to 75% outside the center

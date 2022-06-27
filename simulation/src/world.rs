@@ -1,6 +1,6 @@
 use crate::{
-    walker::{self, WalkResult},
-    Direction, TileType, Walker, WalkerState, WalkerType, WorldStateChange,
+    walker::{WalkResult},
+    ArrowStock, Direction, TileType, Walker, WalkerState, WalkerType, WorldStateChange,
 };
 use arrayvec::ArrayVec;
 use core::convert::TryInto;
@@ -22,6 +22,9 @@ const MAP_AUTHOR_OFFSET: usize = MAP_NAME_OFFSET + MAP_NAME_SIZE;
 /// The size of the wall block
 const WALL_BLOCK_SIZE: usize = 27;
 const WALL_BLOCK_OFFSET: usize = MAP_AUTHOR_OFFSET + MAP_AUTHOR_SIZE;
+/// The size and offset of the tile block
+const TILE_BLOCK_SIZE: usize = 108;
+const TILE_BLOCK_OFFSET: usize = WALL_BLOCK_OFFSET + WALL_BLOCK_SIZE;
 /// The masks used to pack the left walls. There are four walls packed into each byte
 const LEFT_WALL_MASK: [u8; 4] = [0b00000010, 0b00001000, 0b00100000, 0b10000000];
 /// The masks uses to pack the top walls.
@@ -84,6 +87,7 @@ pub struct World {
     mice: ArrayVec<Walker, MAX_WALKERS>,
     cats: ArrayVec<Walker, MAX_WALKERS>,
     tiles: [TileType; MAX_TILES],
+    arrow_stock: ArrowStock,
 }
 
 impl World {
@@ -104,6 +108,7 @@ impl World {
             mice: ArrayVec::new(),
             cats: ArrayVec::new(),
             tiles: [TileType::Empty; MAX_TILES],
+            arrow_stock: ArrowStock::new(),
         };
 
         // Set the walls along the top/left, which also sets the right/bottom
@@ -113,6 +118,69 @@ impl World {
 
         for y in 0..WORLD_HEIGHT {
             world.set_wall(0, y, Direction::Left, true);
+        }
+
+        world
+    }
+
+    /// Loads a world from serialised state
+    pub fn load(data: [u8; 199]) -> World {
+        // Create the world
+        let mut world = World {
+            data: data,
+            mice: ArrayVec::new(),
+            cats: ArrayVec::new(),
+            tiles: [TileType::Empty; MAX_TILES],
+            arrow_stock: ArrowStock::new(),
+        };
+
+        // Read the tiles and walkers from the wall data
+        let tile_block = &data[TILE_BLOCK_OFFSET..TILE_BLOCK_OFFSET + TILE_BLOCK_SIZE];
+        for y in 0..WORLD_HEIGHT {
+            for x in 0..WORLD_WIDTH {
+                let entity_type = tile_block[y * WORLD_WIDTH + x] & ENTITY_TYPE_MASK;
+                let entity_direction = match tile_block[y * WORLD_WIDTH + x] & ENTITY_DIRECTION_MASK
+                {
+                    ENTITY_DIRECTION_UP => Direction::Up,
+                    ENTITY_DIRECTION_DOWN => Direction::Down,
+                    ENTITY_DIRECTION_LEFT => Direction::Left,
+                    // The compiler can't figure out that due to the mask this is a
+                    // comprehensive match, so give it a hand
+                    ENTITY_DIRECTION_RIGHT | _ => Direction::Right,
+                };
+                let arrow_present = tile_block[y * WORLD_WIDTH + x] & ARROW_PRESENT_MASK == ARROW_PRESENT_MASK;
+                let arrow_direction = match tile_block[y * WORLD_WIDTH + x] & ARROW_DIRECTION_MASK
+                {
+                    ARROW_DIRECTION_UP => Direction::Up,
+                    ARROW_DIRECTION_DOWN => Direction::Down,
+                    ARROW_DIRECTION_LEFT => Direction::Left,
+                    // The compiler can't figure out that due to the mask this is a
+                    // comprehensive match, so give it a hand
+                    ARROW_DIRECTION_RIGHT | _ => Direction::Right,
+                };
+
+                // Match tiles/walkers
+                match entity_type {
+                    ENTITY_TYPE_CAT => {
+                        world.create_walker(x, y, entity_direction, WalkerType::Cat);
+                    }
+                    ENTITY_TYPE_MOUSE => {
+                        world.create_walker(x, y, entity_direction, WalkerType::Mouse);
+                    }
+                    ENTITY_TYPE_ROCKET => {
+                        world.set_tile(x, y, TileType::Rocket);
+                    }
+                    ENTITY_TYPE_HOLE => {
+                        world.set_tile(x, y, TileType::Hole);
+                    }
+                    ENTITY_TYPE_EMPTY | _ => {}
+                }
+
+                // Match arrows
+                if arrow_present {
+                    world.arrow_stock[arrow_direction] += 1;
+                }
+            }
         }
 
         world
@@ -128,7 +196,11 @@ impl World {
     ///
     /// Return value:
     /// A tuple containing the wall index and the mask required to extract the given direction
-    const fn get_wrapped_wall_index_and_mask(x: usize, y: usize, direction: Direction) -> (usize, u8) {
+    const fn get_wrapped_wall_index_and_mask(
+        x: usize,
+        y: usize,
+        direction: Direction,
+    ) -> (usize, u8) {
         assert!(x < WORLD_WIDTH);
         assert!(y < WORLD_HEIGHT);
 
@@ -143,7 +215,13 @@ impl World {
         ((e_y * WORLD_WIDTH + e_x) / 4, mask)
     }
 
-    fn set_wall_static(data: &mut [u8; 199], x: usize, y: usize, direction: Direction, present: bool) {
+    fn set_wall_static(
+        data: &mut [u8; 199],
+        x: usize,
+        y: usize,
+        direction: Direction,
+        present: bool,
+    ) {
         assert!(x < WORLD_WIDTH);
         assert!(y < WORLD_HEIGHT);
 
@@ -532,7 +610,7 @@ mod test {
         assert_eq!((4, 0b00000001), World::get_wrapped_wall_index_and_mask(4, 0, Direction::Down));
 
         // Right walls are the left wall of the cell to the left, shifting the mask and increasing
-        // the index by 1 for every 4th eleemnt
+        // the index by 1 for every 4th element
         assert_eq!((0, 0b00001000), World::get_wrapped_wall_index_and_mask(0, 0, Direction::Right));
         assert_eq!((0, 0b00100000), World::get_wrapped_wall_index_and_mask(1, 0, Direction::Right));
         assert_eq!((0, 0b10000000), World::get_wrapped_wall_index_and_mask(2, 0, Direction::Right));
@@ -818,7 +896,7 @@ mod test {
             world.tick();
         }
 
-        // The arrow is dimished and first cat turned around
+        // The arrow is diminished and first cat turned around
         assert_eq!(TileType::DownHalf, world.get_arrow(4, 4));
         assert_eq!(Direction::Down, world.cats[0].get_direction());
         assert_eq!(Direction::Up, world.cats[1].get_direction());

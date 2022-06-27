@@ -70,14 +70,14 @@ impl TickableState for MenuState {
         if input.js_up.pressed {
             self.map_index = match self.map_index {
                 0 => 10,
-                other => other - 1
+                other => other - 1,
             };
         }
 
         if input.js_down.pressed {
             self.map_index = match self.map_index {
                 10 => 0,
-                other => other + 1
+                other => other + 1,
             };
         }
 
@@ -97,7 +97,7 @@ pub struct StateMachine {
     state: AppState,
 
     /// The currently loaded/selected world
-    /// This has to be stored outside the state, as it's not copiable
+    /// This has to be stored outside the state, as it's not copyable
     world: World,
 
     // The target game state
@@ -108,7 +108,7 @@ pub struct StateMachine {
 }
 
 impl StateMachine {
-    pub fn new() -> StateMachine {
+    pub fn new(world: World) -> StateMachine {
         let initial_state = AppState::Intro(IntroState {
             frame: 0,
             transition_started: false,

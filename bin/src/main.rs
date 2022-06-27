@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+mod maps;
+
 #[cfg(not(feature = "panic_led"))]
 use panic_halt as _;
 use pygamer::adc::Adc;
@@ -25,8 +27,9 @@ use pac::{CorePeripherals, Peripherals};
 use st7735_lcd::ST7735;
 
 use common::input::InputState;
+use maps::E1M1;
 use platform::input::{read_input, JoystickReaderWithAdc};
-use simulation::StateMachine;
+use simulation::{StateMachine, World};
 
 /// A type alias for the Pygamer display
 type PygamerDisplay = ST7735<
@@ -64,21 +67,10 @@ fn simulate(game_state: &mut GameState, input: &InputState) {
 }
 
 fn render(game_state: &GameState, outputs: &mut Outputs, resources: &Resources) {
-    (match game_state.led_state {
-        true => outputs.led.set_high(),
-        false => outputs.led.set_low(),
-    })
-    .unwrap();
-
     // TODO: Add double buffering
     // TODO: Figure out some vsync equivalent to avoid tearing/flickering
 
-    (match game_state.led_state {
-        true => outputs.display.clear(Rgb565::BLACK),
-        false => outputs.display.clear(Rgb565::WHITE),
-    })
-    .unwrap();
-
+    outputs.display.clear(Rgb565::BLACK).unwrap();
     Text::new("Hello Rust!", Point::new(20, 30), resources.text_style)
         .draw(outputs.display)
         .unwrap();
@@ -129,7 +121,7 @@ fn main() -> ! {
     tcounter.start(60.hz());
 
     let mut game_state = GameState {
-        state_machine: StateMachine::new(),
+        state_machine: StateMachine::new(World::load(E1M1)),
     };
 
     let mut outputs = Outputs {
@@ -141,7 +133,7 @@ fn main() -> ! {
         text_style: MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE),
     };
 
-    let last_input = InputState::new();
+    let mut last_input = InputState::new();
     // Main loop.
     loop {
         // Read input

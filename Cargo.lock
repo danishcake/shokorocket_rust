@@ -75,6 +75,7 @@ dependencies = [
  "pygamer",
  "simulation",
  "st7735-lcd",
+ "world_macros",
 ]
 
 [[package]]
@@ -418,7 +419,6 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "common",
- "world_macros",
 ]
 
 [[package]]

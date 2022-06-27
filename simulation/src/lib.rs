@@ -1,5 +1,6 @@
 #![no_std]
 
+mod arrow_stock;
 mod direction;
 mod fixed_point;
 mod state_machine;
@@ -8,6 +9,7 @@ mod walker;
 mod world;
 mod world_state;
 
+pub use arrow_stock::ArrowStock;
 pub use direction::Direction;
 pub use fixed_point::FixedPoint;
 pub use state_machine::{GameState, StateMachine};
